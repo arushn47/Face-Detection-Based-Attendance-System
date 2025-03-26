@@ -6,7 +6,7 @@
 <div class="container mt-4">
     <h2 class="text-center">Add Student to {{ class_name }}</h2>
 
-    <form>
+    <form method="POST" action="{{ url_for('teacher.add_student', class_name=class_name) }}" enctype="multipart/form-data">
         <div class="mb-3">
             <label for="student_name" class="form-label">Student Name:</label>
             <input type="text" id="student_name" class="form-control" required>
@@ -14,6 +14,10 @@
         <div class="mb-3">
             <label for="reg_no" class="form-label">Registration Number:</label>
             <input type="text" id="reg_no" class="form-control" required>
+        </div>
+        <div class="mb-3">
+            <label for="parent_email" class="form-label">Parent Email:</label>
+            <input type="email" id="parent_email" class="form-control" required>
         </div>
     </form>
 
@@ -26,8 +30,23 @@
         <button type="button" class="btn btn-success" onclick="captureImage()">Capture Face</button>
         <button type="button" class="btn btn-danger" id="stopCameraBtn" onclick="stopCamera()" disabled>Stop Camera</button>
     </div>
+</div>
 
-    <p id="status" class="text-center mt-3"></p>
+<!-- Bootstrap Modal -->
+<div class="modal fade" id="statusModal" tabindex="-1" aria-labelledby="statusModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="statusModalLabel">Status</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="statusMessage">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -37,7 +56,7 @@
         const video = document.getElementById("video");
 
         if (!video) {
-            alert("Video element not found!");
+            showModal("Video element not found!");
             return;
         }
 
@@ -48,7 +67,7 @@
             document.getElementById("startCameraBtn").disabled = true;
             document.getElementById("stopCameraBtn").disabled = false;
         } catch (error) {
-            alert("Error accessing the camera: " + error.message);
+            showModal("Error accessing the camera: " + error.message);
         }
     }
 
@@ -67,14 +86,15 @@
         const video = document.getElementById("video");
         const studentName = document.getElementById("student_name").value.trim();
         const regNo = document.getElementById("reg_no").value.trim();
+        const parentEmail = document.getElementById("parent_email").value.trim();
 
         if (!video.srcObject) {
-            alert("Please start the camera first!");
+            showModal("Please start the camera first!");
             return;
         }
 
-        if (!studentName || !regNo) {
-            alert("Please enter both Student Name and Registration Number.");
+        if (!studentName || !regNo || !parentEmail) {
+            showModal("Please enter all fields (Student Name, Registration Number, Parent Email).");
             return;
         }
 
@@ -91,6 +111,7 @@
             formData.append("class_name", "{{ class_name }}");
             formData.append("student_name", studentName);
             formData.append("reg_no", regNo);
+            formData.append("parent_email", parentEmail);
             formData.append("image", blob, "student_face.jpg");
 
             fetch("/teacher/save_student_face", {
@@ -99,13 +120,19 @@
             })
             .then(response => response.json())
             .then(data => {
-                document.getElementById("status").innerText = data.message;
+                showModal(data.message);
             })
             .catch(error => {
                 console.error("Error:", error);
-                document.getElementById("status").innerText = "❌ Error Saving Image!";
+                showModal("❌ Error Saving Image!");
             });
         }, "image/jpeg");
+    }
+
+    function showModal(message) {
+        document.getElementById("statusMessage").innerText = message;
+        var statusModal = new bootstrap.Modal(document.getElementById("statusModal"));
+        statusModal.show();
     }
 </script>
 {% endblock %}

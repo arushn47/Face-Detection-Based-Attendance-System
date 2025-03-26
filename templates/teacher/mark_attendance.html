@@ -1,11 +1,11 @@
 {% extends "common/base.html" %}
 
-{% block title %}Principal Dashboard{% endblock %}
+{% block title %}Mark Attendance{% endblock %}
 
 {% block content %}
-<div class="container mt-3">
+<div class="container mt-2 p-4">
     <h2 class="text-center mb-2">Mark Attendance</h2>
-    <p class="text-center mb-3">Class: <strong>{{ class_name }}</strong> | Date: <strong>{{ date }}</strong></p>
+    <p class="text-center mb-4">Class: <strong>{{ class_name }}</strong> | Date: <strong>{{ date }}</strong></p>
 
     <div class="d-flex flex-column align-items-center card p-3 shadow-sm">
         <video id="video" class="border rounded mb-3" autoplay width="500px" style="transform: scaleX(-1);"></video>
@@ -17,6 +17,7 @@
         <p id="status" class="mt-4"></p>
     </div>
 </div>
+
 <script defer>
     let videoStream;
 
@@ -37,7 +38,6 @@
         canvas.height = video.videoHeight;
         const ctx = canvas.getContext("2d");
 
-        // Flip image horizontally (mirror fix)
         ctx.translate(canvas.width, 0);
         ctx.scale(-1, 1);
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -55,48 +55,38 @@
         })
         .then(response => response.json())
         .then(data => {
-        const statusElement = document.getElementById("status");
+            const statusElement = document.getElementById("status");
 
-        if (data.status === 200) {
-            const { student_name, reg_no } = data;
-            // Proceed with attendance check
-            fetch("/teacher/check_attendance", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    student_name: student_name,
-                    reg_no: reg_no,
-                    class_name: "{{ class_name }}",
-                    date: "{{ date }}"
-                })
-            })
-            .then(res => res.json())
-            .then(attendanceData => {
-                const statusElement = document.getElementById("status");
-                if (attendanceData.already_present) {
-                    statusElement.innerHTML = `<div class='alert alert-info'>⚠️ ${student_name} is already marked present.</div>`;
-                } else {
-                    statusElement.innerHTML = `
-                        <div class='alert alert-warning d-flex align-items-center justify-content-between'>
-                            <span>✅ Is this <strong>${student_name}</strong> (Reg No: ${reg_no})?</span> 
-                            <div class='d-inline-flex gap-2 ms-3'>
-                                <button class='btn btn-success btn-sm me-1' onclick='confirmAttendance("${student_name}", "${reg_no}", "{{ class_name }}", "{{ date }}")'>Yes</button>
-                                <button class='btn btn-danger btn-sm' onclick='rejectAttendance()'>No</button>
-                            </div>
-                        </div>`;
-                }
-            });
-        } else {
-            statusElement.innerHTML = `<div class='alert alert-danger'>❌ ${data.message}</div>`;
-        }
-    })
+            if (data.status === 200) {
+                const { student_name, reg_no } = data;
+                console.log('Student:', student_name, 'Reg No:', reg_no, 'Date:', "{{ date }}"); // Log the values to ensure they're correct
+
+                statusElement.innerHTML = `
+                    <div class='alert alert-warning d-flex align-items-center justify-content-between'>
+                        <span>✅ Is this <strong>${student_name}</strong> (Reg No: ${reg_no})?</span> 
+                        <div class='d-inline-flex gap-2 ms-3'>
+                            <button class='btn btn-success btn-sm me-1' onclick='confirmAttendance("${student_name}", "${reg_no}", "{{ class_name }}", "{{ date }}")'>Yes</button>
+                            <button class='btn btn-danger btn-sm' onclick='rejectAttendance()'>No</button>
+                        </div>
+                    </div>`;
+            } else {
+                statusElement.innerHTML = `<div class='alert alert-danger'>❌ ${data.message}</div>`;
+            }
+        });
     }
 
     function confirmAttendance(studentName, regNo, className, date) {
+        console.log('Confirming Attendance:', studentName, regNo, className, date);  // Log values before sending the request
+
         fetch("/teacher/confirm_attendance", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ student_name: studentName, reg_no: regNo, class_name: className, date: date })
+            body: JSON.stringify({
+                student_name: studentName,
+                reg_no: regNo,
+                class_name: className,
+                date: date
+            })
         })
         .then(response => response.json())
         .then(data => {

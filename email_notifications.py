@@ -3,30 +3,46 @@ import os
 import csv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from dotenv import load_dotenv
 
-def send_attendance_email(student_name, status, date):
+load_dotenv()
+
+def send_attendance_email(student_name, reg_no, status, date):
     sender_email = os.getenv("EMAIL_USER")
     sender_password = os.getenv("EMAIL_PASS")
     smtp_server = "smtp.gmail.com"
     smtp_port = 587
 
     if not sender_email or not sender_password:
+        print("Email credentials are not set.") 
         return "Email credentials not set."
 
-    # Load parent emails from users.csv
     parent_emails = {}
-    with open("data/users.csv", "r") as file:
-        reader = csv.DictReader(file)
-        for row in reader:
-            parent_emails[row["username"]] = row.get("email", "")
 
-    if student_name not in parent_emails or not parent_emails[student_name]:
-        return f"No email found for {student_name}"
+    try:
+        with open("data/students.csv", "r", encoding="utf-8-sig") as file:
+            reader = csv.DictReader(file)
+            for row in reader:
+                if "Reg No" in row and "Parent Email" in row:
+                    parent_emails[row["Reg No"].strip()] = row["Parent Email"].strip()  
+        print("Parent emails loaded:", parent_emails) 
 
-    parent_email = parent_emails[student_name]
+    except FileNotFoundError:
+        print("students.csv file not found.")
+        return "Error: students.csv not found."
+    except Exception as e:
+        print(f"Error reading CSV: {str(e)}")
+        return f"Error reading CSV: {str(e)}"
+
+    parent_email = parent_emails.get(reg_no.strip())
+    if not parent_email:
+        print(f"No email found for student {student_name} (Reg No: {reg_no})")
+        return f"No email found for student {student_name} (Reg No: {reg_no})"
+
+    student_name = student_name.capitalize()
 
     subject = f"Attendance Update for {date}"
-    body = f"Dear Parent,\n\nYour ward {student_name} is marked as {status} today ({date}).\n\nRegards,\nSchool Administration"
+    body = f"Dear Parent,\n\nYour ward {student_name} (Reg No: {reg_no}) is marked as {status} today ({date}).\n\nRegards,\nSchool Administration"
 
     msg = MIMEMultipart()
     msg["From"] = sender_email
@@ -35,11 +51,12 @@ def send_attendance_email(student_name, status, date):
     msg.attach(MIMEText(body, "plain"))
 
     try:
-        server = smtplib.SMTP(smtp_server, smtp_port)
-        server.starttls()
-        server.login(sender_email, sender_password)
-        server.sendmail(sender_email, parent_email, msg.as_string())
-        server.quit()
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, parent_email, msg.as_string())
+        print(f"Email sent to {parent_email}")
         return f"Email sent to {parent_email}"
     except Exception as e:
+        print(f"Failed to send email: {str(e)}")
         return f"Failed to send email: {str(e)}"

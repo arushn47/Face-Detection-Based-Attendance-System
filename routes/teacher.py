@@ -9,12 +9,13 @@ import dlib
 from email_notifications import send_attendance_email
 
 teacher_bp = Blueprint("teacher", __name__, template_folder="../templates/teacher")
-LANDMARK_MODEL_PATH = "data/shape_predictor_68_face_landmarks.dat"
-FACE_REC_MODEL_PATH = "data/dlib_face_recognition_resnet_model_v1.dat"
 DATA_DIR = "data"
 ATTENDANCE_DIR = os.path.join(DATA_DIR, "attendance")
 FACES_DIR = os.path.join(DATA_DIR, "faces")
 USER_CSV = os.path.join(DATA_DIR, "users.csv")
+STUDENTS_CSV = os.path.join(DATA_DIR, "students.csv")
+LANDMARK_MODEL_PATH = "data/shape_predictor_68_face_landmarks.dat"
+FACE_REC_MODEL_PATH = "data/dlib_face_recognition_resnet_model_v1.dat"
 
 face_cascade = cv2.CascadeClassifier("data/haarcascade_frontalface_default.xml")
 predictor = dlib.shape_predictor(LANDMARK_MODEL_PATH)
@@ -28,62 +29,58 @@ def ensure_users_csv():
     if not os.path.exists(USER_CSV):
         with open(USER_CSV, 'w', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow(['user_code','username', 'password', 'role', 'assigned_class'])
+            writer.writerow(['user_code', 'username', 'password', 'role', 'assigned_class'])
 
 def get_teacher_assigned_classes(username):
     with open(USER_CSV, "r") as file:
-        reader = csv.DictReader(file)
-        for row in reader:
+        for row in csv.DictReader(file):
             if row["username"] == username and row["role"] == "teacher":
                 return row["assigned_class"].split(";") if row["assigned_class"] else []
     return []
 
 def get_class_attendance(class_name, date):
     file_path = os.path.join(ATTENDANCE_DIR, class_name, f"{date}.csv")
-
     if not os.path.exists(file_path):
         return []
-
-    with open(file_path, "r", newline="") as file:
-        reader = csv.reader(file)
-        next(reader, None)  # Skip header
-        attendance_records = [
-            {"name": row[0], "reg_no": row[1], "status": row[2], "time": row[3]}
-            for row in reader
-        ]
-
-    return attendance_records
+    with open(file_path, "r") as file:
+        return list(csv.reader(file))
 
 def process_student_name(student_name):
-    student_name_without_extension = student_name.rsplit(".", 1)[0]
-
-    if "_" in student_name_without_extension:
-        parts = student_name_without_extension.rsplit("_", 1)
-        name = " ".join(word.capitalize() for word in parts[0].split())
-        reg_no = parts[1]
-    else:
-        name = student_name_without_extension.capitalize()
-        reg_no = "Unknown"
+    base_name, _ = os.path.splitext(student_name)  # Remove file extension
+    parts = base_name.rsplit("_", 1)  # Split at the last underscore
+    
+    name = " ".join(word.capitalize() for word in parts[0].split())  # Capitalize name
+    reg_no = parts[1] if len(parts) > 1 else "Unknown"  # Extract reg_no if present
     
     return name, reg_no
+
+def check_attendance(student_name, class_name, date, reg_no):
+    file_path = os.path.join(ATTENDANCE_DIR, class_name, f"{date}.csv")
+    if os.path.exists(file_path):
+        with open(file_path, mode='r', newline='') as file:
+            reader = csv.reader(file)
+            next(reader, None)  # Skip the header
+            return any(row[0] == reg_no and row[1] == student_name for row in reader)
+    return False
 
 def manage_attendance(class_name, student_name, reg_no, date):
     file_path = os.path.join(ATTENDANCE_DIR, class_name, f"{date}.csv")
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
-    if os.path.exists(file_path):
-        with open(file_path, "r", newline="") as f:
-            reader = csv.reader(f)
-            if any(row[1] == reg_no for row in reader):
-                return jsonify({"message": f"{student_name} is already marked present", "status": 400})
+    file_exists = os.path.exists(file_path)
+    if not file_exists:
+        with open(file_path, mode='w', newline='') as file:
+            csv.writer(file).writerow(["Reg No", "Student Name", "Status", "Date-Time"])
 
-    with open(file_path, "a", newline="") as f:
-        writer = csv.writer(f)
-        if f.tell() == 0:
-            writer.writerow(["Student Name", "Reg No", "Status", "Time"])
-        writer.writerow([student_name, reg_no, "Present", datetime.now().strftime("%H:%M:%S")])
+    if check_attendance(student_name, class_name, date, reg_no):
+        return jsonify({"message": "Student is already present", "status": 201}), 201
 
-    return jsonify({"message": f"{student_name} marked present", "status": 200})
+    else:
+        with open(file_path, mode='a', newline='') as file:
+            csv.writer(file).writerow([reg_no, student_name, "Present", datetime.now().strftime('%Y-%m-%d %H:%M:%S')])
+            send_attendance_email(student_name, reg_no, "Present", date)
+
+    return jsonify({"message": "Attendance marked successfully", "status": 200}), 200
 
 def get_face_encoding(image):
     if image is None or image.size == 0:
@@ -139,6 +136,20 @@ def recognize_face(face_encoding, class_name):
 
     return name, reg_no
 
+def save_student_details(student_name, reg_no, class_name, parent_email):
+    students = []
+    if os.path.exists(STUDENTS_CSV):
+        with open(STUDENTS_CSV, "r", newline="") as file:
+            students = list(csv.reader(file))[1:]
+
+    students.append([reg_no, student_name, class_name, parent_email])
+    students.sort(key=lambda x: x[0])
+
+    with open(STUDENTS_CSV, "w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(["Reg No", "Name", "Class", "Parent Email"])
+        writer.writerows(students)
+
 @teacher_bp.route("/dashboard", methods=["GET", "POST"])
 def dashboard():
     if "username" not in session or session.get("role") != "teacher":
@@ -150,48 +161,49 @@ def dashboard():
 
     return render_template("teacher/dashboard.html", assigned_classes=assigned_classes, selected_class=selected_class, selected_date=selected_date)
 
-def get_class_attendance(class_name, date):
-    file_path = os.path.join(ATTENDANCE_DIR, class_name, f"{date}.csv")
-    if not os.path.exists(file_path):
-        return []
-    with open(file_path, "r") as file:
-        return list(csv.reader(file))
-
 @teacher_bp.route("/mark_attendance/<class_name>/<date>", methods=["GET", "POST"])
 def mark_attendance(class_name, date):
     if "username" not in session or session.get("role") != "teacher":
         return redirect(url_for("auth.login"))
 
     if request.method == "POST":
-        student_name = request.form.get("student_name")
-        if student_name:
+        student_name_with_reg = request.form.get("student_name")
+        if student_name_with_reg:
+            student_name, reg_no = process_student_name(student_name_with_reg)
+            
             records = get_class_attendance(class_name, date)
             if not any(row[0] == student_name for row in records):
                 file_path = os.path.join(ATTENDANCE_DIR, class_name, f"{date}.csv")
-                with open(file_path, "a", newline="") as file:
-                    csv.writer(file).writerow([student_name, "Present"])
+                file_exists = os.path.isfile(file_path)
                 
-                # Send email notification
+                with open(file_path, "a", newline="") as file:
+                    writer = csv.writer(file)
+                
+                    if not file_exists:
+                        writer.writerow(["Student Name", "Reg No", "Status", "Time"])
+                    
+                    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    writer.writerow([student_name, reg_no, "Present", current_time])
+                
                 send_attendance_email(student_name, "Present", date)
 
     return render_template("teacher/mark_attendance.html", class_name=class_name, date=date, attendance_records=get_class_attendance(class_name, date))
-@teacher_bp.route("/view_attendance", methods=["GET", "POST"])
-def view_attendance():
-    class_name = request.args.get("class_name")
-    date = request.args.get("date")
+
+@teacher_bp.route("/view_attendance/<class_name>/<date>", methods=["GET", "POST"])
+def view_attendance(class_name, date):
 
     if not class_name or not date:
         return render_template("dashboard.html")
 
     file_path = os.path.join(ATTENDANCE_DIR, class_name, f"{date}.csv")
 
-    attendance_records = []
+    attendance_records = get_class_attendance(class_name, date)
 
     if os.path.isfile(file_path):
                 with open(file_path, 'r') as file:
                     reader = csv.reader(file)
                     attendance_records = [
-                        {"student_name": row[0], "reg_no": row[1], "status": row[2], "time": row[3]}
+                        {"reg_no": row[0],"student_name": row[1], "status": row[2], "time": row[3]}
                         for row in list(reader)[1:]
                     ]
 
@@ -235,7 +247,7 @@ def save_student_face():
         return jsonify({'message': 'Student face saved successfully!'}), 200
     except Exception as e:
         return jsonify({'message': 'Error saving image: ' + str(e)}), 500
-
+    
 @teacher_bp.route("/scan_face", methods=["POST"])
 def scan_face():
     try:
@@ -274,26 +286,6 @@ def scan_face():
 
     except Exception as e:
         return jsonify({"status": 500, "message": str(e)})
-
-@teacher_bp.route("/check_attendance", methods=["POST"])
-def check_attendance():
-    data = request.json
-    student_name, class_name, date = data.get("student_name"), data.get("class_name"), data.get("date")
-
-    if not all([student_name, class_name, date]):
-        return jsonify({"message": "Missing required fields!", "status": 400})
-
-    file_path = os.path.join(ATTENDANCE_DIR, class_name, f"{date}.csv")
-    if os.path.exists(file_path):
-        with open(file_path, mode='r', newline='') as file:
-            reader = csv.reader(file)
-            for row in reader:
-                if row[0] == student_name:
-                    name, reg_no = process_student_name(row[0])
-                    if reg_no == row[1]:  # Compare the reg_no
-                        return jsonify({"already_present": True}), 200
-
-    return jsonify({"already_present": False}), 200
 
 @teacher_bp.route("/confirm_attendance", methods=["POST"])
 def confirm_attendance():
