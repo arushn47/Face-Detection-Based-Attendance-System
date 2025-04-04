@@ -1,0 +1,179 @@
+{% extends "common/base.html" %}
+
+{% block title %}Mark Attendance{% endblock %}
+
+{% block content %}
+<div class="container mt-2 p-4">
+    <h2 class="text-center mb-2">Mark Attendance</h2>
+    <p class="text-center mb-4">Class: <strong>{{ class_name }}</strong> | Date: <strong>{{ date }}</strong></p>
+
+    <div class="d-flex flex-column align-items-center card p-3 shadow-sm">
+        <div id="video-container">
+            <video id="video" class="border rounded-circle mb-3" autoplay></video>
+        </div>
+        <div class="mt-3 d-flex justify-content-center gap-3">
+            <button id="startCameraBtn" class="btn btn-primary" onclick="startCamera()">Start Camera</button>
+            <button id="flipCameraBtn" class="btn btn-secondary d-none" onclick="flipCamera()">Flip Camera</button>
+            <button id="scanFaceBtn" class="btn btn-success d-none" onclick="captureFace()">Scan Face</button>
+        </div>
+        <p id="status" class="mt-4 text-center"></p>
+    </div>
+
+    <div class="mt-3 text-center">
+        <a href="{{ url_for('teacher.dashboard', class_name=class_name) }}" class="btn btn-secondary">Back</a>
+    </div>
+</div>
+
+<style>
+    #video-container {
+        width: 200px;
+        height: 200px;
+        border-radius: 50%;
+        overflow: hidden;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+
+    #video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transform: scaleX(-1); /* Default to mirrored for front camera */
+    }
+</style>
+
+<script defer>
+    let videoStream;
+    let useFrontCamera = true;
+    let isCapturing = false;
+
+    async function startCamera() {
+        const video = document.getElementById("video");
+
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            alert("Your browser does not support camera access.");
+            return;
+        }
+
+        try {
+            videoStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: useFrontCamera ? "user" : "environment" }
+            });
+
+            video.srcObject = videoStream;
+            isCapturing = true;
+
+            // Mirror video only for front camera
+            video.style.transform = useFrontCamera ? "scaleX(-1)" : "scaleX(1)";
+
+            // Hide Start Camera button, show Flip & Scan buttons
+            document.getElementById("startCameraBtn").classList.add("d-none");
+            document.getElementById("flipCameraBtn").classList.remove("d-none");
+            document.getElementById("scanFaceBtn").classList.remove("d-none");
+
+        } catch (error) {
+            alert("Error accessing the camera: " + error.message);
+        }
+    }
+
+    async function captureFace() {
+        if (!isCapturing) {
+            startCamera();
+            return;
+        }
+
+        const statusElement = document.getElementById("status");
+        statusElement.innerHTML = `<div class='alert alert-info'>⏳ Scanning face... <span class='spinner-border spinner-border-sm'></span></div>`;
+
+        const video = document.getElementById("video");
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext("2d");
+
+        // Capture image normally without mirroring
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const imageBase64 = canvas.toDataURL("image/jpeg");
+
+        // Stop camera and freeze captured image
+        stopCamera();
+        video.srcObject = null;
+        video.style.background = `url(${imageBase64})`;
+        video.style.backgroundSize = "cover";
+        video.style.backgroundPosition = "center";
+
+        fetch("/teacher/scan_face", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                class_name: "{{ class_name }}",
+                date: "{{ date }}",
+                image: imageBase64
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 200) {
+                const { student_name, reg_no } = data;
+                statusElement.innerHTML = `
+                    <div class='alert alert-warning d-flex align-items-center justify-content-between'>
+                        <span>✅ Is this <strong>${student_name}</strong> (Reg No: ${reg_no})?</span> 
+                        <div class='d-inline-flex gap-2 ms-3'>
+                            <button class='btn btn-success btn-sm me-1' onclick='confirmAttendance("${student_name}", "${reg_no}", "{{ class_name }}", "{{ date }}")'>Yes</button>
+                            <button class='btn btn-danger btn-sm' onclick='rejectAttendance()'>No</button>
+                        </div>
+                    </div>`;
+            } else {
+                statusElement.innerHTML = `<div class='alert alert-danger'>❌ ${data.message}</div>`;
+            }
+        })
+        .catch(error => {
+            statusElement.innerHTML = `<div class='alert alert-danger'>❌ Error scanning face.</div>`;
+        });
+
+        isCapturing = false;
+    }
+
+    function confirmAttendance(studentName, regNo, className, date) {
+        fetch("/teacher/confirm_attendance", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                student_name: studentName,
+                reg_no: regNo,
+                class_name: className,
+                date: date
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 200) {
+                document.getElementById("status").innerHTML = `<div class='alert alert-success'>✅ ${studentName} (Reg No: ${regNo}) marked present</div>`;
+            } else {
+                document.getElementById("status").innerHTML = `<div class='alert alert-info'>⚠️ ${studentName} is already marked present.</div>`;
+            }
+        })
+        .catch(error => {
+            document.getElementById("status").innerHTML = "<div class='alert alert-danger'>❌ Error marking attendance.</div>";
+        });
+    }
+
+    function flipCamera() {
+        useFrontCamera = !useFrontCamera;
+        stopCamera();
+        startCamera();
+    }
+
+    function rejectAttendance() {
+        document.getElementById("status").innerHTML = "<div class='alert alert-warning'>⚠️ Attendance not marked.</div>";
+    }
+
+    function stopCamera() {
+        if (videoStream) {
+            videoStream.getTracks().forEach(track => track.stop());
+        }
+    }
+</script>
+{% endblock %}
